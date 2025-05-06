@@ -155,8 +155,8 @@ class SCENE_OT_prepare_sionna_export(bpy.types.Operator):
                  logging.error("Blender Addon: Mitsuba exporter not found.")
                  return {'CANCELLED'}
 
-            logging.info(f"Blender Addon: Attempting to call Mitsuba export operator with filepath='{xml_filepath}', export_ids=True")
-            bpy.ops.export_scene.mitsuba(filepath=xml_filepath, export_ids=True) # Reverted to implicit context
+            logging.info(f"Blender Addon: Attempting to call Mitsuba export operator with filepath='{xml_filepath}', export_ids=True, export_emitters=False")
+            bpy.ops.export_scene.mitsuba(filepath=xml_filepath, export_ids=True, export_emitters=False)
             logging.info("Blender Addon: Mitsuba export operator call finished.")
             self.report({'INFO'}, f"Mitsuba scene exported to {xml_filepath}")
             logging.info(f"Blender Addon: Mitsuba scene exported to {xml_filepath}")
