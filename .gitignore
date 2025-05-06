@@ -1,2 +1,3 @@
 # Ignore Blender files
 *.blend
+mitsuba-blender/
