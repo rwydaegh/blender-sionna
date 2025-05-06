@@ -45,6 +45,7 @@ from bpy.props import StringProperty, IntProperty
 import json
 import urllib.request # Using urllib instead of requests for built-in compatibility
 import urllib.error
+import os # Import the os module
 
 # No global SERVER_URL needed anymore, it will be constructed from scene properties.
 
@@ -129,6 +130,132 @@ class SCENE_OT_send_data(bpy.types.Operator):
             
         return {'FINISHED'}
 
+class SCENE_OT_prepare_sionna_export(bpy.types.Operator):
+    """Prepares scene data and exports for Sionna simulation"""
+    bl_idname = "scene.prepare_sionna_export"
+    bl_label = "Prepare Sionna Export"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        self.report({'INFO'}, "Starting Sionna export preparation...")
+        print("Blender Addon: Starting Sionna export preparation...")
+
+        scene = context.scene
+        temp_dir = bpy.path.abspath("//temp/") # Use a relative path within the blend file directory
+        os.makedirs(temp_dir, exist_ok=True)
+        xml_filepath = os.path.join(temp_dir, "sionna_scene.xml")
+
+        # 1. Call Mitsuba export operator
+        try:
+            # Ensure the Mitsuba exporter is available and enabled
+            if "export_scene.mitsuba" not in bpy.ops.export_scene:
+                 self.report({'ERROR'}, "Mitsuba exporter not found. Please ensure the Mitsuba Blender addon is installed and enabled.")
+                 print("Blender Addon: Mitsuba exporter not found.")
+                 return {'CANCELLED'}
+
+            bpy.ops.export_scene.mitsuba(filepath=xml_filepath, export_ids=True)
+            self.report({'INFO'}, f"Mitsuba scene exported to {xml_filepath}")
+            print(f"Blender Addon: Mitsuba scene exported to {xml_filepath}")
+
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to export Mitsuba scene: {str(e)}")
+            print(f"Blender Addon: Failed to export Mitsuba scene: {str(e)}")
+            return {'CANCELLED'}
+
+        # 2. Find Tx/Rx Empties and collect data
+        tx_rx_data = []
+        for obj in scene.objects:
+            # Check if the object is an Empty and its name starts with TX_ or RX_
+            if obj.type == 'EMPTY' and (obj.name.startswith("TX_") or obj.name.startswith("RX_")):
+                obj_data = {
+                    "blender_name": obj.name,
+                    "location": [obj.location.x, obj.location.y, obj.location.z],
+                    "rotation_euler": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+                    "custom_properties": {}
+                }
+                # Collect custom properties starting with 'sionna_'
+                for key in obj.keys():
+                    if key.startswith("sionna_"):
+                        obj_data["custom_properties"][key] = obj[key]
+                tx_rx_data.append(obj_data)
+                print(f"Blender Addon: Collected data for {obj.name}: {obj_data}")
+
+        if not tx_rx_data:
+            self.report({'WARNING'}, "No objects starting with 'TX_' or 'RX_' found in the scene.")
+            print("Blender Addon: No objects starting with 'TX_' or 'RX_' found.")
+            # Decide if we should still send the XML without Tx/Rx data or cancel
+            # For now, let's proceed and send an empty tx_rx_data list
+
+        # 3. Package and send data to server (This will be implemented in the next step)
+        # For now, just report the collected data
+        self.report({'INFO'}, f"Collected data for {len(tx_rx_data)} Tx/Rx objects.")
+        print(f"Blender Addon: Collected data for {len(tx_rx_data)} Tx/Rx objects: {tx_rx_data}")
+
+
+        # 3. Package and send data to server
+        payload = {
+            "xml_path": xml_filepath,
+            "tx_rx_list": tx_rx_data
+        }
+
+        json_payload = json.dumps(payload).encode('utf-8')
+
+        # Construct server URL from scene properties
+        server_ip = scene.server_ip_address
+        server_port = scene.server_port
+        if not server_ip:
+            self.report({'ERROR'}, "Server IP address is not set in the panel.")
+            print("Blender Addon: Server IP address is not set.")
+            return {'CANCELLED'}
+
+        # Use the new endpoint for setting up the Sionna scene
+        server_url = f"http://{server_ip}:{server_port}/setup_sionna_scene"
+
+        self.report({'INFO'}, f"Sending scene setup data to {server_url}")
+        print(f"Blender Addon: Sending scene setup data to {server_url}")
+        # print(f"Blender Addon: Payload: {payload}") # Uncomment for debugging
+
+        try:
+            req = urllib.request.Request(server_url, data=json_payload, headers={'Content-Type': 'application/json'}, method='POST')
+            with urllib.request.urlopen(req, timeout=30) as response: # Increased timeout for potential server processing
+                response_data = response.read().decode('utf-8')
+                response_json = json.loads(response_data)
+
+                message = response_json.get("message", "No message field in response.")
+                status = response_json.get("status", "unknown")
+                details = response_json.get("details", "No details provided.")
+
+                self.report({'INFO'}, f"Server response: Status: {status}, Message: {message}")
+                print(f"Blender Addon: Server response: Status: {status}, Message: {message}")
+                print(f"Blender Addon: Server response details: {details}")
+
+
+        except urllib.error.URLError as e:
+            error_message = f"Network error: {e.reason}"
+            if hasattr(e, 'code'):
+                error_message += f" (HTTP Status Code: {e.code})"
+            self.report({'ERROR'}, error_message)
+            print(f"Blender Addon: {error_message}")
+            if hasattr(e, 'read'): # If there's a response body with the error
+                try:
+                    error_body = e.read().decode('utf-8')
+                    print(f"Blender Addon: Server error details: {error_body}")
+                except Exception as read_err:
+                    print(f"Blender Addon: Could not read error body: {read_err}")
+        except json.JSONDecodeError:
+            self.report({'ERROR'}, "Failed to decode JSON response from server.")
+            print("Blender Addon: Failed to decode JSON response from server.")
+        except Exception as e:
+            self.report({'ERROR'}, f"An unexpected error occurred: {str(e)}")
+            print(f"Blender Addon: An unexpected error occurred: {str(e)}")
+
+
+        self.report({'INFO'}, "Sionna export preparation and data sent.")
+        print("Blender Addon: Sionna export preparation and data sent.")
+
+        return {'FINISHED'}
+
+
 class SCENEDATA_PT_panel(bpy.types.Panel):
     """Creates a Panel in the 3D View Sidebar for sending scene data"""
     bl_label = "Scene Data Sender"
@@ -147,15 +274,24 @@ class SCENEDATA_PT_panel(bpy.types.Panel):
         row.prop(scene, "server_ip_address", text="IP Address")
         row = box.row()
         row.prop(scene, "server_port", text="Port")
-        
+
         layout.separator()
-        
+
+        # Existing button for sending basic data
         row = layout.row()
         row.operator(SCENE_OT_send_data.bl_idname)
+
+        layout.separator() # Add a separator for clarity
+
+        # New button for Phase 2 Sionna export
+        row = layout.row()
+        row.operator(SCENE_OT_prepare_sionna_export.bl_idname)
+
 
 # List of classes to register
 classes = (
     SCENE_OT_send_data,
+    SCENE_OT_prepare_sionna_export, # Add the new operator here
     SCENEDATA_PT_panel,
 )
 
