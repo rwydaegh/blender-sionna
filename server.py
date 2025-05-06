@@ -15,6 +15,8 @@
 from flask import Flask, request, jsonify
 import sionna.rt # Import sionna.rt
 from sionna.rt import Transmitter, Receiver, PlanarArray # Import necessary Sionna classes
+import tempfile # For handling temporary files
+import os # For file operations like deleting the temp file
 
 # Create a Flask application instance
 app = Flask(__name__)
@@ -83,93 +85,114 @@ def scene_data():
         print(f"Error processing /api/scene_data request: {e}")
         return jsonify({"error": str(e)}), 500
     
-    # Define the API endpoint /setup_sionna_scene that accepts POST requests
-    @app.route('/setup_sionna_scene', methods=['POST'])
-    def setup_sionna_scene():
-        """
-        Receives XML file path and Tx/Rx data, sets up Sionna scene,
-        and performs minimal validation.
-        """
+# Define the API endpoint /setup_sionna_scene that accepts POST requests
+@app.route('/setup_sionna_scene', methods=['POST'])
+def setup_sionna_scene():
+    """
+    Receives XML file path and Tx/Rx data, sets up Sionna scene,
+    and performs minimal validation.
+    """
+    try:
+        # Get the JSON data from the request
+        data = request.get_json()
+
+        # Extract xml_content and tx_rx_list
+        xml_content = data.get('xml_content')
+        tx_rx_list = data.get('tx_rx_list', [])
+
+        if not xml_content:
+            print("Error: 'xml_content' not found in request.")
+            return jsonify({"status": "error", "message": "Missing 'xml_content' in JSON payload"}), 400
+
+        print(f"Received request to setup Sionna scene with XML content (length: {len(xml_content)}).")
+        print(f"Received {len(tx_rx_list)} Tx/Rx objects data.")
+
+        # --- Sionna Scene Setup Logic ---
+        temp_xml_file = None # Initialize to ensure it's defined for the finally block
         try:
-            # Get the JSON data from the request
-            data = request.get_json()
+            # Create a temporary file to store the XML content
+            # delete=False is used because sionna.rt.load_scene needs a path to an existing file.
+            # We will manually delete it in the finally block.
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.xml', encoding='utf-8') as tmp_f:
+                tmp_f.write(xml_content)
+                temp_xml_file_path = tmp_f.name
+            print(f"XML content written to temporary file: {temp_xml_file_path}")
+
+            # Load the Mitsuba scene from the temporary file
+            scene = sionna.rt.load_scene(temp_xml_file_path)
+            print(f"Sionna scene loaded from temporary file: {temp_xml_file_path}")
+
+            # Set default antenna arrays (can be refined later)
+            scene.tx_array = PlanarArray(num_rows=1, num_cols=1, pattern="iso", polarization="V")
+            scene.rx_array = PlanarArray(num_rows=1, num_cols=1, pattern="iso", polarization="V")
+            print("Default antenna arrays set.")
+
+            # Add Transmitters and Receivers from received data
+            added_tx = []
+            added_rx = []
+            for obj_data in tx_rx_list:
+                obj_type = obj_data.get("blender_name", "").split("_")[0] # Simple type inference from name prefix
+                sionna_name = obj_data.get("custom_properties", {}).get("sionna_name", obj_data.get("blender_name"))
+                location = obj_data.get("location")
+
+                if not sionna_name or not location:
+                    print(f"Skipping Tx/Rx object due to missing name or location: {obj_data}")
+                    continue
+
+                position = location # Sionna expects position as a list/array
+
+                if obj_type == "TX":
+                    tx = Transmitter(name=sionna_name, position=position)
+                    scene.add(tx)
+                    added_tx.append(sionna_name)
+                    print(f"Added Sionna Transmitter: {sionna_name} at {position}")
+                elif obj_type == "RX":
+                    rx = Receiver(name=sionna_name, position=position)
+                    scene.add(rx)
+                    added_rx.append(sionna_name)
+                    print(f"Added Sionna Receiver: {sionna_name} at {position}")
+                else:
+                    print(f"Skipping object with unrecognized prefix: {obj_data.get('blender_name')}")
+
+
+            # Minimal validation
+            validation_output = {
+                "scene_objects_count": len(scene.objects),
+                "transmitters_added": added_tx,
+                "receivers_added": added_rx,
+                "total_transmitters_in_scene": len(scene.transmitters),
+                "total_receivers_in_scene": len(scene.receivers)
+            }
+            print("Sionna scene setup complete. Validation output:")
+            print(validation_output)
+
+            return jsonify({"status": "success", "message": "Sionna scene setup complete.", "details": validation_output}), 200
+
+        except Exception as sionna_e:
+            print(f"Error during Sionna scene setup: {sionna_e}")
+            import traceback
+            print(traceback.format_exc()) # Print full traceback for server-side debugging
+            return jsonify({"status": "error", "message": f"Error during Sionna scene setup: {str(sionna_e)}", "details": traceback.format_exc()}), 500
+        finally:
+            # Clean up the temporary file
+            if temp_xml_file_path and os.path.exists(temp_xml_file_path):
+                try:
+                    os.remove(temp_xml_file_path)
+                    print(f"Temporary XML file {temp_xml_file_path} deleted.")
+                except Exception as e_remove:
+                    print(f"Error deleting temporary XML file {temp_xml_file_path}: {e_remove}")
     
-            # Extract xml_path and tx_rx_list
-            xml_path = data.get('xml_path')
-            tx_rx_list = data.get('tx_rx_list', [])
-    
-            if not xml_path:
-                print("Error: 'xml_path' not found in request.")
-                return jsonify({"status": "error", "message": "Missing 'xml_path' in JSON payload"}), 400
-    
-            print(f"Received request to setup Sionna scene with XML: {xml_path}")
-            print(f"Received {len(tx_rx_list)} Tx/Rx objects data.")
-    
-            # --- Sionna Scene Setup Logic ---
-            try:
-                # Load the Mitsuba scene
-                scene = sionna.rt.load_scene(xml_path)
-                print(f"Sionna scene loaded from {xml_path}")
-    
-                # Set default antenna arrays (can be refined later)
-                scene.tx_array = PlanarArray(num_rows=1, num_cols=1, pattern="iso", polarization="V")
-                scene.rx_array = PlanarArray(num_rows=1, num_cols=1, pattern="iso", polarization="V")
-                print("Default antenna arrays set.")
-    
-                # Add Transmitters and Receivers from received data
-                added_tx = []
-                added_rx = []
-                for obj_data in tx_rx_list:
-                    obj_type = obj_data.get("blender_name", "").split("_")[0] # Simple type inference from name prefix
-                    sionna_name = obj_data.get("custom_properties", {}).get("sionna_name", obj_data.get("blender_name"))
-                    location = obj_data.get("location")
-    
-                    if not sionna_name or not location:
-                        print(f"Skipping Tx/Rx object due to missing name or location: {obj_data}")
-                        continue
-    
-                    position = location # Sionna expects position as a list/array
-    
-                    if obj_type == "TX":
-                        tx = Transmitter(name=sionna_name, position=position)
-                        scene.add(tx)
-                        added_tx.append(sionna_name)
-                        print(f"Added Sionna Transmitter: {sionna_name} at {position}")
-                    elif obj_type == "RX":
-                        rx = Receiver(name=sionna_name, position=position)
-                        scene.add(rx)
-                        added_rx.append(sionna_name)
-                        print(f"Added Sionna Receiver: {sionna_name} at {position}")
-                    else:
-                        print(f"Skipping object with unrecognized prefix: {obj_data.get('blender_name')}")
-    
-    
-                # Minimal validation
-                validation_output = {
-                    "scene_objects_count": len(scene.objects),
-                    "transmitters_added": added_tx,
-                    "receivers_added": added_rx,
-                    "total_transmitters_in_scene": len(scene.transmitters),
-                    "total_receivers_in_scene": len(scene.receivers)
-                }
-                print("Sionna scene setup complete. Validation output:")
-                print(validation_output)
-    
-                return jsonify({"status": "success", "message": "Sionna scene setup complete.", "details": validation_output}), 200
-    
-            except Exception as sionna_e:
-                print(f"Error during Sionna scene setup: {sionna_e}")
-                return jsonify({"status": "error", "message": f"Error during Sionna scene setup: {str(sionna_e)}", "details": str(sionna_e)}), 500
-    
-        except Exception as e:
-            print(f"Error processing /setup_sionna_scene request: {e}")
-            return jsonify({"status": "error", "message": f"An unexpected error occurred: {str(e)}", "details": str(e)}), 500
-    
-    
-    # Main execution block to run the Flask development server
-    if __name__ == '__main__':
-        # Run the app on all available IP addresses (0.0.0.0)
-        # and on port 5000.
-        # Debug mode can be enabled for development (app.run(host='0.0.0.0', port=5000, debug=True))
-        # but should be turned off for production.
-        app.run(host='0.0.0.0', port=5000)
+    except Exception as e:
+        print(f"Error processing /setup_sionna_scene request: {e}")
+        import traceback
+        print(traceback.format_exc()) # Print full traceback for server-side debugging
+        return jsonify({"status": "error", "message": f"An unexpected error occurred: {str(e)}", "details": traceback.format_exc()}), 500
+
+
+# Main execution block to run the Flask development server
+if __name__ == '__main__':
+    # Run the app on all available IP addresses (0.0.0.0)
+    # and on port 5000.
+    # Debug mode can be enabled for development (app.run(host='0.0.0.0', port=5000, debug=True))
+    # but should be turned off for production.
+    app.run(host='0.0.0.0', port=5000)

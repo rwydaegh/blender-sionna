@@ -46,6 +46,8 @@ import json
 import urllib.request # Using urllib instead of requests for built-in compatibility
 import urllib.error
 import os # Import the os module
+import logging # Import the logging module
+import traceback # Import the traceback module
 
 # No global SERVER_URL needed anymore, it will be constructed from scene properties.
 
@@ -138,7 +140,7 @@ class SCENE_OT_prepare_sionna_export(bpy.types.Operator):
 
     def execute(self, context):
         self.report({'INFO'}, "Starting Sionna export preparation...")
-        print("Blender Addon: Starting Sionna export preparation...")
+        logging.info("Blender Addon: Starting Sionna export preparation...")
 
         scene = context.scene
         temp_dir = bpy.path.abspath("//temp/") # Use a relative path within the blend file directory
@@ -148,18 +150,22 @@ class SCENE_OT_prepare_sionna_export(bpy.types.Operator):
         # 1. Call Mitsuba export operator
         try:
             # Ensure the Mitsuba exporter is available and enabled
-            if "export_scene.mitsuba" not in bpy.ops.export_scene:
+            if not hasattr(bpy.ops.export_scene, "mitsuba"):
                  self.report({'ERROR'}, "Mitsuba exporter not found. Please ensure the Mitsuba Blender addon is installed and enabled.")
-                 print("Blender Addon: Mitsuba exporter not found.")
+                 logging.error("Blender Addon: Mitsuba exporter not found.")
                  return {'CANCELLED'}
 
-            bpy.ops.export_scene.mitsuba(filepath=xml_filepath, export_ids=True)
+            logging.info(f"Blender Addon: Attempting to call Mitsuba export operator with filepath='{xml_filepath}', export_ids=True")
+            bpy.ops.export_scene.mitsuba(filepath=xml_filepath, export_ids=True) # Reverted to implicit context
+            logging.info("Blender Addon: Mitsuba export operator call finished.")
             self.report({'INFO'}, f"Mitsuba scene exported to {xml_filepath}")
-            print(f"Blender Addon: Mitsuba scene exported to {xml_filepath}")
+            logging.info(f"Blender Addon: Mitsuba scene exported to {xml_filepath}")
 
         except Exception as e:
-            self.report({'ERROR'}, f"Failed to export Mitsuba scene: {str(e)}")
-            print(f"Blender Addon: Failed to export Mitsuba scene: {str(e)}")
+            tb_str = traceback.format_exc()
+            self.report({'ERROR'}, f"Failed to export Mitsuba scene: {str(e)}. Traceback: {tb_str}")
+            logging.error(f"Blender Addon: Failed to export Mitsuba scene: {str(e)}")
+            logging.error(f"Blender Addon Traceback: {tb_str}")
             return {'CANCELLED'}
 
         # 2. Find Tx/Rx Empties and collect data
@@ -178,23 +184,32 @@ class SCENE_OT_prepare_sionna_export(bpy.types.Operator):
                     if key.startswith("sionna_"):
                         obj_data["custom_properties"][key] = obj[key]
                 tx_rx_data.append(obj_data)
-                print(f"Blender Addon: Collected data for {obj.name}: {obj_data}")
+                logging.info(f"Blender Addon: Collected data for {obj.name}: {obj_data}")
 
         if not tx_rx_data:
             self.report({'WARNING'}, "No objects starting with 'TX_' or 'RX_' found in the scene.")
-            print("Blender Addon: No objects starting with 'TX_' or 'RX_' found.")
+            logging.warning("Blender Addon: No objects starting with 'TX_' or 'RX_' found.")
             # Decide if we should still send the XML without Tx/Rx data or cancel
             # For now, let's proceed and send an empty tx_rx_data list
 
         # 3. Package and send data to server (This will be implemented in the next step)
         # For now, just report the collected data
         self.report({'INFO'}, f"Collected data for {len(tx_rx_data)} Tx/Rx objects.")
-        print(f"Blender Addon: Collected data for {len(tx_rx_data)} Tx/Rx objects: {tx_rx_data}")
+        logging.info(f"Blender Addon: Collected data for {len(tx_rx_data)} Tx/Rx objects: {tx_rx_data}")
 
 
-        # 3. Package and send data to server
+        # 3. Read XML file content and package data for server
+        try:
+            with open(xml_filepath, 'r', encoding='utf-8') as f:
+                xml_file_content = f.read()
+            logging.info(f"Blender Addon: Successfully read XML content from {xml_filepath}")
+        except Exception as e:
+            self.report({'ERROR'}, f"Failed to read XML file {xml_filepath}: {str(e)}")
+            logging.error(f"Blender Addon: Failed to read XML file {xml_filepath}: {str(e)}", exc_info=True)
+            return {'CANCELLED'}
+
         payload = {
-            "xml_path": xml_filepath,
+            "xml_content": xml_file_content, # Send content instead of path
             "tx_rx_list": tx_rx_data
         }
 
@@ -212,8 +227,8 @@ class SCENE_OT_prepare_sionna_export(bpy.types.Operator):
         server_url = f"http://{server_ip}:{server_port}/setup_sionna_scene"
 
         self.report({'INFO'}, f"Sending scene setup data to {server_url}")
-        print(f"Blender Addon: Sending scene setup data to {server_url}")
-        # print(f"Blender Addon: Payload: {payload}") # Uncomment for debugging
+        logging.info(f"Blender Addon: Sending scene setup data to {server_url}")
+        # logging.info(f"Blender Addon: Payload: {payload}") # Uncomment for debugging
 
         try:
             req = urllib.request.Request(server_url, data=json_payload, headers={'Content-Type': 'application/json'}, method='POST')
@@ -226,32 +241,52 @@ class SCENE_OT_prepare_sionna_export(bpy.types.Operator):
                 details = response_json.get("details", "No details provided.")
 
                 self.report({'INFO'}, f"Server response: Status: {status}, Message: {message}")
-                print(f"Blender Addon: Server response: Status: {status}, Message: {message}")
-                print(f"Blender Addon: Server response details: {details}")
+                logging.info(f"Blender Addon: Server response: Status: {status}, Message: {message}")
+                logging.info(f"Blender Addon: Server response details: {details}")
 
 
         except urllib.error.URLError as e:
-            error_message = f"Network error: {e.reason}"
+            detailed_error_message = f"Network error: {e.reason}" # Renamed from error_message for clarity
             if hasattr(e, 'code'):
-                error_message += f" (HTTP Status Code: {e.code})"
-            self.report({'ERROR'}, error_message)
-            print(f"Blender Addon: {error_message}")
+                detailed_error_message += f" (HTTP Status Code: {e.code})"
+            
+            server_details_str = "" # Store details from server response
             if hasattr(e, 'read'): # If there's a response body with the error
                 try:
-                    error_body = e.read().decode('utf-8')
-                    print(f"Blender Addon: Server error details: {error_body}")
+                    # Attempt to read and decode the error body from the server response
+                    error_body_content = e.read().decode('utf-8')
+                    # The error_body_content is often JSON from our Flask server, containing the actual error
+                    server_details_str = f" Server Details: {error_body_content}"
+                    # Log the raw server details; exc_info=False because error_body_content is the primary info here
+                    logging.error(f"Blender Addon: Server error details: {error_body_content}", exc_info=False)
                 except Exception as read_err:
-                    print(f"Blender Addon: Could not read error body: {read_err}")
+                    server_details_str = " Server Details: Could not read or decode error body from server."
+                    logging.error(f"Blender Addon: Could not read server error body: {read_err}", exc_info=True)
+            
+            # Combine the network error with server details for reporting
+            final_report_message = detailed_error_message + server_details_str
+            
+            # Blender's self.report has a limited display length, so truncate if necessary for the UI.
+            # The full message will be in the logs.
+            max_blender_report_length = 250 # Adjust if necessary, Blender UI might truncate very long messages
+            if len(final_report_message) > max_blender_report_length:
+                report_to_ui = final_report_message[:max_blender_report_length - 3] + "..."
+            else:
+                report_to_ui = final_report_message
+
+            self.report({'ERROR'}, report_to_ui)
+            # Log the full combined error message along with client-side traceback for comprehensive debugging
+            logging.error(f"Blender Addon: Full error context: {final_report_message}", exc_info=True)
         except json.JSONDecodeError:
             self.report({'ERROR'}, "Failed to decode JSON response from server.")
-            print("Blender Addon: Failed to decode JSON response from server.")
+            logging.error("Blender Addon: Failed to decode JSON response from server.", exc_info=True) # Added exc_info=True
         except Exception as e:
             self.report({'ERROR'}, f"An unexpected error occurred: {str(e)}")
-            print(f"Blender Addon: An unexpected error occurred: {str(e)}")
+            logging.error(f"Blender Addon: An unexpected error occurred: {str(e)}", exc_info=True) # Added exc_info=True
 
 
         self.report({'INFO'}, "Sionna export preparation and data sent.")
-        print("Blender Addon: Sionna export preparation and data sent.")
+        logging.info("Blender Addon: Sionna export preparation and data sent.")
 
         return {'FINISHED'}
 
