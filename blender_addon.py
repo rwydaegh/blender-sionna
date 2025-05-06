@@ -29,12 +29,12 @@
 # Or bundle the library with your addon. For simplicity, we assume it's available or can be installed.
 
 bl_info = {
-    "name": "Server Test Panel",
+    "name": "Scene Data Sender",
     "author": "AI Assistant",
     "version": (1, 0),
     "blender": (2, 80, 0),  # Minimum Blender version
     "location": "View3D > Sidebar > Server Test",
-    "description": "Sends active object name to a server and prints response.",
+    "description": "Sends basic scene data (object names, types, transforms) to a server.",
     "warning": "",
     "doc_url": "",
     "category": "Development",
@@ -48,23 +48,33 @@ import urllib.error
 
 # No global SERVER_URL needed anymore, it will be constructed from scene properties.
 
-class OBJECT_OT_send_name(bpy.types.Operator):
-    """Sends the active object's name to the server"""
-    bl_idname = "object.send_active_object_name"
-    bl_label = "Send Object Name"
+class SCENE_OT_send_data(bpy.types.Operator):
+    """Sends basic scene data to the server"""
+    bl_idname = "scene.send_data"
+    bl_label = "Send Scene Data"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        active_obj = context.active_object
         scene = context.scene
+        objects_data = []
 
-        if active_obj is None:
-            self.report({'ERROR'}, "No active object selected.")
-            print("Blender Addon: No active object selected.")
-            return {'CANCELLED'}
+        if not scene.objects:
+            self.report({'WARNING'}, "No objects in the scene to send.")
+            print("Blender Addon: No objects in the scene.")
+            # We can still send an empty list if desired, or cancel.
+            # For now, let's send an empty list.
+            # return {'CANCELLED'}
 
-        object_name = active_obj.name
-        payload = {"object_name": object_name}
+        for obj in scene.objects:
+            objects_data.append({
+                "name": obj.name,
+                "type": obj.type,
+                "location": [obj.location.x, obj.location.y, obj.location.z],
+                "rotation_euler": [obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z],
+                "scale": [obj.scale.x, obj.scale.y, obj.scale.z],
+            })
+
+        payload = {"scene_objects": objects_data}
         
         # Convert payload to JSON string and then to bytes
         json_payload = json.dumps(payload).encode('utf-8')
@@ -77,10 +87,15 @@ class OBJECT_OT_send_name(bpy.types.Operator):
             print("Blender Addon: Server IP address is not set.")
             return {'CANCELLED'}
         
-        server_url = f"http://{server_ip}:{server_port}/api/echo_name"
+        # Consider changing the endpoint on the server side as well.
+        # For now, we'll keep /api/echo_name and the server will just acknowledge.
+        # A better endpoint would be /api/scene_data
+        server_url = f"http://{server_ip}:{server_port}/api/scene_data" # Changed endpoint
 
-        self.report({'INFO'}, f"Sending object name: {object_name} to {server_url}")
-        print(f"Blender Addon: Sending '{object_name}' to {server_url}")
+        self.report({'INFO'}, f"Sending scene data for {len(objects_data)} object(s) to {server_url}")
+        print(f"Blender Addon: Sending data for {len(objects_data)} object(s) to {server_url}")
+        if objects_data:
+            print(f"Blender Addon: First object data: {objects_data[0]}")
 
         try:
             req = urllib.request.Request(server_url, data=json_payload, headers={'Content-Type': 'application/json'}, method='POST')
@@ -114,13 +129,13 @@ class OBJECT_OT_send_name(bpy.types.Operator):
             
         return {'FINISHED'}
 
-class SERVERTEST_PT_panel(bpy.types.Panel):
-    """Creates a Panel in the Object properties window"""
-    bl_label = "Server Test"
-    bl_idname = "SERVERTEST_PT_panel"
+class SCENEDATA_PT_panel(bpy.types.Panel):
+    """Creates a Panel in the 3D View Sidebar for sending scene data"""
+    bl_label = "Scene Data Sender"
+    bl_idname = "SCENEDATA_PT_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Server Test' # Tab name in the N-panel
+    bl_category = 'Scene Sync' # Tab name in the N-panel
 
     def draw(self, context):
         layout = self.layout
@@ -136,12 +151,12 @@ class SERVERTEST_PT_panel(bpy.types.Panel):
         layout.separator()
         
         row = layout.row()
-        row.operator(OBJECT_OT_send_name.bl_idname)
+        row.operator(SCENE_OT_send_data.bl_idname)
 
 # List of classes to register
 classes = (
-    OBJECT_OT_send_name,
-    SERVERTEST_PT_panel,
+    SCENE_OT_send_data,
+    SCENEDATA_PT_panel,
 )
 
 def register():
@@ -160,7 +175,7 @@ def register():
         min=1,
         max=65535
     )
-    print("Blender Addon: 'Server Test Panel' registered with properties.")
+    print("Blender Addon: 'Scene Data Sender' registered with properties.")
 
 def unregister():
     for cls in reversed(classes):
@@ -168,7 +183,7 @@ def unregister():
     
     del bpy.types.Scene.server_ip_address
     del bpy.types.Scene.server_port
-    print("Blender Addon: 'Server Test Panel' unregistered with properties.")
+    print("Blender Addon: 'Scene Data Sender' unregistered with properties.")
 
 if __name__ == "__main__":
     # This part is for testing registration from Blender's text editor
