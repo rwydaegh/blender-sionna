@@ -4,6 +4,8 @@ This document outlines the plan for creating a simple client-server application.
 
 ## Objective
 
+*Note: SSH authentication has been set up for this repository.*
+
 Create a minimal setup to demonstrate:
 1.  Data extraction from Blender.
 2.  Sending data from a Blender addon (client) to a web server.
