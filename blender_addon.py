@@ -10,16 +10,14 @@
 
 # How to Use:
 # 1. Make sure the Flask server (server.py) is running.
-# 2. If the server is on a remote machine (e.g., Vast.ai):
-#    IMPORTANT: Edit the SERVER_URL in this script (around line 39)
-#    to `http://<YOUR_SERVER_PUBLIC_IP>:<PORT>/api/echo_name`.
-#    Replace <YOUR_SERVER_PUBLIC_IP> with the actual public IP of your server
-#    and <PORT> with the externally accessible port for the Flask app.
+# 2. Configure the Server IP and Port in the addon's panel in Blender (View3D > Sidebar > Server Test).
+#    Default is 127.0.0.1 and port 5000.
 # 3. In Blender's 3D View, add an object (e.g., a Cube) and make sure it is selected (active).
 # 4. Press "N" in the 3D View to open the side panel.
 # 5. Find the "Server Test" tab/panel.
-# 6. Click the "Send Object Name" button.
-# 7. Open Blender's system console (Window > Toggle System Console) to see the server's response
+# 6. Enter the server's IP address and port if different from the defaults.
+# 7. Click the "Send Object Name" button.
+# 8. Open Blender's system console (Window > Toggle System Console) to see the server's response
 #    or any error messages.
 
 # Note on 'requests' library:
@@ -43,15 +41,12 @@ bl_info = {
 }
 
 import bpy
+from bpy.props import StringProperty, IntProperty
 import json
 import urllib.request # Using urllib instead of requests for built-in compatibility
 import urllib.error
 
-# Configuration
-# For local testing with server.py on the same machine:
-SERVER_URL = "http://127.0.0.1:5000/api/echo_name"
-# For remote server (e.g., Vast.ai):
-# SERVER_URL = "http://YOUR_VAST_AI_PUBLIC_IP:PORT/api/echo_name" # <-- EDIT THIS FOR REMOTE SERVER
+# No global SERVER_URL needed anymore, it will be constructed from scene properties.
 
 class OBJECT_OT_send_name(bpy.types.Operator):
     """Sends the active object's name to the server"""
@@ -61,6 +56,7 @@ class OBJECT_OT_send_name(bpy.types.Operator):
 
     def execute(self, context):
         active_obj = context.active_object
+        scene = context.scene
 
         if active_obj is None:
             self.report({'ERROR'}, "No active object selected.")
@@ -73,11 +69,21 @@ class OBJECT_OT_send_name(bpy.types.Operator):
         # Convert payload to JSON string and then to bytes
         json_payload = json.dumps(payload).encode('utf-8')
 
-        self.report({'INFO'}, f"Sending object name: {object_name} to {SERVER_URL}")
-        print(f"Blender Addon: Sending '{object_name}' to {SERVER_URL}")
+        # Construct server URL from scene properties
+        server_ip = scene.server_ip_address
+        server_port = scene.server_port
+        if not server_ip:
+            self.report({'ERROR'}, "Server IP address is not set in the panel.")
+            print("Blender Addon: Server IP address is not set.")
+            return {'CANCELLED'}
+        
+        server_url = f"http://{server_ip}:{server_port}/api/echo_name"
+
+        self.report({'INFO'}, f"Sending object name: {object_name} to {server_url}")
+        print(f"Blender Addon: Sending '{object_name}' to {server_url}")
 
         try:
-            req = urllib.request.Request(SERVER_URL, data=json_payload, headers={'Content-Type': 'application/json'}, method='POST')
+            req = urllib.request.Request(server_url, data=json_payload, headers={'Content-Type': 'application/json'}, method='POST')
             with urllib.request.urlopen(req, timeout=10) as response: # Added timeout
                 response_data = response.read().decode('utf-8')
                 response_json = json.loads(response_data)
@@ -118,6 +124,17 @@ class SERVERTEST_PT_panel(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        scene = context.scene
+
+        box = layout.box()
+        box.label(text="Server Configuration:")
+        row = box.row()
+        row.prop(scene, "server_ip_address", text="IP Address")
+        row = box.row()
+        row.prop(scene, "server_port", text="Port")
+        
+        layout.separator()
+        
         row = layout.row()
         row.operator(OBJECT_OT_send_name.bl_idname)
 
@@ -130,12 +147,28 @@ classes = (
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
-    print("Blender Addon: 'Server Test Panel' registered.")
+    
+    bpy.types.Scene.server_ip_address = StringProperty(
+        name="Server IP Address",
+        description="IP address of the Flask server",
+        default="127.0.0.1"
+    )
+    bpy.types.Scene.server_port = IntProperty(
+        name="Server Port",
+        description="Port number of the Flask server",
+        default=5000,
+        min=1,
+        max=65535
+    )
+    print("Blender Addon: 'Server Test Panel' registered with properties.")
 
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
-    print("Blender Addon: 'Server Test Panel' unregistered.")
+    
+    del bpy.types.Scene.server_ip_address
+    del bpy.types.Scene.server_port
+    print("Blender Addon: 'Server Test Panel' unregistered with properties.")
 
 if __name__ == "__main__":
     # This part is for testing registration from Blender's text editor

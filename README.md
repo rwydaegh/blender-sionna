@@ -40,10 +40,9 @@ This project is designed for users new to Flask and client-server networking.
         *   Gets the name of `bpy.context.active_object.name`.
         *   If no object is selected, prints "No active object selected." to the Blender system console.
         *   If an object is active, constructs JSON: `{"object_name": "THE_ACTIVE_OBJECT_NAME"}`.
-        *   Sends this JSON via POST to the server: `http://YOUR_SERVER_IP:PORT/api/echo_name`.
-            *   Initially, `YOUR_SERVER_IP:PORT` will be hardcoded to `127.0.0.1:5000` for local testing.
-            *   **Crucially, for remote server testing, this URL must be updated in `blender_addon.py` to point to your actual server's public IP and accessible port.**
-        *   Uses the `requests` library. (Note: `requests` might need to be installed in Blender's Python environment if not already present. A comment will be added to the code.)
+        *   Sends this JSON via POST to the server. The server URL (`http://YOUR_SERVER_IP:PORT/api/echo_name`) is constructed dynamically using the IP address and port configured in the addon's UI panel.
+            *   Default IP is `127.0.0.1` and default port is `5000`.
+        *   Uses the `urllib.request` library (built-in).
         *   Prints the server's full response (or specific message field) to the Blender system console.
         *   Includes basic `try-except` for network errors (e.g., `requests.exceptions.ConnectionError`).
 *   **Structure:**
@@ -54,9 +53,9 @@ This project is designed for users new to Flask and client-server networking.
 *   **Instructions for Use (Client - Your Local Blender):**
     1.  Save the Blender addon code as `blender_addon.py`.
     2.  Open Blender: `Edit > Preferences > Add-ons > Install...` and select `blender_addon.py`. Enable it.
-    3.  **Important:** If testing against a remote server (like Vast.ai), edit `blender_addon.py` and change the server URL from `http://127.0.0.1:5000/api/echo_name` to `http://<YOUR_SERVER_PUBLIC_IP>:<PORT>/api/echo_name`.
-    4.  In Blender's 3D View, add an object (e.g., a Cube) and ensure it's selected.
-    5.  Press "N" to open the side panel. Find the "Server Test" panel.
+    3.  In Blender's 3D View, add an object (e.g., a Cube) and ensure it's selected.
+    4.  Press "N" to open the side panel. Find the "Server Test" panel.
+    5.  In the "Server Test" panel, configure the "IP Address" and "Port" fields to match your running Flask server. (Defaults are 127.0.0.1 and 5000 for local testing).
     6.  Click "Send Object Name".
     7.  Open Blender's system console (`Window > Toggle System Console`) to view the server's response.
 
