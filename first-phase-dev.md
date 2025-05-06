@@ -2,6 +2,8 @@
 
 This document outlines the initial steps and feature development plan for integrating Sionna raytracing capabilities into a Blender addon. The long-term vision is to have a button within Blender that triggers a Sionna simulation of the scene. This plan breaks down the process into manageable phases, building upon the existing Blender-Flask object name echo application.
 
+The application assumes that the Mitsuba renderer add-on is installed on Blender too. The source code  can be found here too. The idea is that the Blender file is converted to xml in the front-end and this file is sent to the backend with Sionna. But there can also be other items. One the first we want is a transmitter and receiver, of which you can see examples in the sionna_tutorials.py 
+
 ## Phase 1: Establish Basic Communication and Data Transfer
 
 *   **Goal:** Extend the existing Blender-Flask application to send more complex scene data from Blender to the server.
@@ -14,7 +16,6 @@ This document outlines the initial steps and feature development plan for integr
 
 *   **Goal:** Set up the server environment to run Sionna simulations and process scene data.
 *   **Steps:**
-    *   Install Sionna and its dependencies on the server.
     *   Develop server-side code to load the received scene data into a format usable by Sionna.
     *   Perform a minimal Sionna operation (e.g., setting up a basic scene or environment) using the received data.
 
