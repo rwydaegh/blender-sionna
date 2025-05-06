@@ -1,3 +1,9 @@
 # Ignore Blender files
 *.blend
 mitsuba-blender/
+
+# Python virtual environment
+venv/
+
+# Backup of the previous .git directory
+.git_backup/
